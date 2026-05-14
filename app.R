@@ -1,0 +1,206 @@
+# 加载包
+library(shiny)
+library(readxl)
+library(ggplot2)
+library(DT)
+library(dplyr)
+library(bslib)
+library(writexl)
+
+
+df <- read_excel("~/Desktop/data/dataset/maternal/maternal and infant.xlsx")
+
+# ========== UI界面（修复重复width错误） ==========
+ui <- fluidPage(
+  theme = bs_theme(version = 5, bootswatch = "minty"),
+  titlePanel("母婴睡眠与心理关联分析 - 交互式可视化Demo"),
+  
+  # 全局筛选器（所有标签页生效）
+  sidebarLayout(
+    sidebarPanel(
+      h4("全局数据筛选", style = "color: #2c3e50; font-weight: bold;"),
+      # 婴儿性别筛选
+      checkboxGroupInput("filter_gender", "婴儿性别：",
+                         choices = unique(df$`Infant Gender`),
+                         selected = unique(df$`Infant Gender`)),
+      # 母亲婚姻状况筛选
+      checkboxGroupInput("filter_marital", "母亲婚姻状况：",
+                         choices = unique(df$`marital status`),
+                         selected = unique(df$`marital status`)),
+      # 婴儿行为特征筛选
+      checkboxGroupInput("filter_behavior", "婴儿行为特征：",
+                         choices = unique(df$`Infant behavioral characteristics`),
+                         selected = unique(df$`Infant behavioral characteristics`)),
+      hr(),
+      downloadButton("download_data", "下载筛选后的数据", class = "btn-primary"),
+      width = 3  # 只保留这一个width参数
+    ),
+    
+    # 主面板：3个标签页
+    mainPanel(
+      tabsetPanel(
+        # 标签页1：核心变量分布
+        tabPanel("1. 核心指标分布",
+                 selectInput("dist_var", "选择要查看的指标：",
+                             choices = c(
+                               "母亲抑郁评分(EPDS)" = "EPDS",
+                               "母亲焦虑评分(HADS)" = "HADS",
+                               "母亲育儿压力(CBTS)" = "CBTS",
+                               "婴儿总睡眠时长(分钟)" = "Total_sleep_time_minutes",
+                               "婴儿夜醒次数" = "Awakenings Times"
+                             )),
+                 plotOutput("dist_plot", height = "450px"),
+                 downloadButton("download_dist_plot", "下载图表", class = "btn-sm btn-outline-secondary")
+        ),
+        
+        # 标签页2：分组差异对比
+        tabPanel("2. 分组差异分析",
+                 fluidRow(
+                   column(6, selectInput("group_var", "分组依据：",
+                                         choices = c(
+                                           "婴儿性别" = "Infant Gender",
+                                           "母亲婚姻状况" = "marital status",
+                                           "婴儿行为特征" = "Infant behavioral characteristics",
+                                           "孕期分组" = "Gestation duration (weeks).1"
+                                         ))),
+                   column(6, selectInput("compare_var", "对比指标：",
+                                         choices = c(
+                                           "母亲抑郁评分(EPDS)" = "EPDS",
+                                           "婴儿睡眠时长(分钟)" = "Total_sleep_time_minutes",
+                                           "婴儿夜醒次数" = "Awakenings Times"
+                                         )))
+                 ),
+                 plotOutput("group_plot", height = "450px"),
+                 downloadButton("download_group_plot", "下载图表", class = "btn-sm btn-outline-secondary")
+        ),
+        
+        # 标签页3：变量关联分析
+        tabPanel("3. 变量关联分析",
+                 fluidRow(
+                   column(6, selectInput("x_var", "X轴（自变量）：",
+                                         choices = c(
+                                           "母亲年龄" = "maternal age",
+                                           "母亲抑郁评分(EPDS)" = "EPDS",
+                                           "婴儿月龄" = "Infant age (months)"
+                                         ))),
+                   column(6, selectInput("y_var", "Y轴（因变量）：",
+                                         choices = c(
+                                           "婴儿睡眠时长(分钟)" = "Total_sleep_time_minutes",
+                                           "婴儿夜醒次数" = "Awakenings Times",
+                                           "母亲焦虑评分(HADS)" = "HADS"
+                                         )))
+                 ),
+                 plotOutput("corr_plot", height = "450px"),
+                 verbatimTextOutput("corr_result"),
+                 downloadButton("download_corr_plot", "下载图表", class = "btn-sm btn-outline-secondary")
+        ),
+        
+        # 标签页4：原始数据表格
+        tabPanel("4. 原始数据", DTOutput("data_table"))
+      )
+    )
+  )
+)
+
+# ========== 服务器逻辑 ==========
+server <- function(input, output) {
+  
+  # 响应式筛选数据（全局生效）
+  filtered_data <- reactive({
+    df %>%
+      filter(`Infant Gender` %in% input$filter_gender) %>%
+      filter(`marital status` %in% input$filter_marital) %>%
+      filter(`Infant behavioral characteristics` %in% input$filter_behavior)
+  })
+  
+  # 1. 核心指标分布
+  output$dist_plot <- renderPlot({
+    var <- input$dist_var
+    data <- filtered_data()
+    
+    if (var == "Awakenings Times") {
+      data %>%
+        count(!!sym(var)) %>%
+        ggplot(aes(x = factor(!!sym(var)), y = n)) +
+        geom_bar(stat = "identity", fill = "#1abc9c", alpha = 0.8) +
+        labs(x = var, y = "样本数量", title = paste(var, "分布")) +
+        theme_minimal(base_size = 14) +
+        theme(plot.title = element_text(face = "bold", hjust = 0.5))
+    } else {
+      ggplot(data, aes(x = !!sym(var))) +
+        geom_density(fill = "#3498db", alpha = 0.6) +
+        geom_vline(xintercept = mean(data[[var]]), color = "#e74c3c", linetype = "dashed", linewidth = 1) +
+        labs(x = var, y = "密度", title = paste(var, "分布（红线=均值）")) +
+        theme_minimal(base_size = 14) +
+        theme(plot.title = element_text(face = "bold", hjust = 0.5))
+    }
+  })
+  
+  # 2. 分组差异对比
+  output$group_plot <- renderPlot({
+    group_var <- input$group_var
+    compare_var <- input$compare_var
+    data <- filtered_data()
+    
+    ggplot(data, aes(x = factor(!!sym(group_var)), y = !!sym(compare_var), fill = factor(!!sym(group_var)))) +
+      geom_boxplot(alpha = 0.7, show.legend = FALSE) +
+      labs(x = group_var, y = compare_var, title = paste(compare_var, "在不同", group_var, "下的差异")) +
+      theme_minimal(base_size = 14) +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5),
+            axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+  
+  # 3. 变量关联分析
+  output$corr_plot <- renderPlot({
+    x_var <- input$x_var
+    y_var <- input$y_var
+    data <- filtered_data()
+    
+    ggplot(data, aes(x = !!sym(x_var), y = !!sym(y_var))) +
+      geom_point(alpha = 0.6, color = "#9b59b6", size = 2) +
+      geom_smooth(method = "lm", color = "#e67e22", linewidth = 1.2) +
+      labs(x = x_var, y = y_var, title = paste(x_var, "与", y_var, "的关联")) +
+      theme_minimal(base_size = 14) +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5))
+  })
+  
+  # 显示相关系数结果
+  output$corr_result <- renderPrint({
+    x <- filtered_data()[[input$x_var]]
+    y <- filtered_data()[[input$y_var]]
+    corr <- cor(x, y, use = "complete.obs")
+    cat("=== 相关性分析结果 ===\n")
+    cat("Pearson相关系数：", round(corr, 3), "\n")
+    cat("强度：", ifelse(abs(corr) < 0.3, "弱相关", 
+                      ifelse(abs(corr) < 0.7, "中等相关", "强相关")), "\n")
+    cat("方向：", ifelse(corr > 0, "正相关（X越大，Y越大）", "负相关（X越大，Y越小）"))
+  })
+  
+  # 4. 原始数据表格
+  output$data_table <- renderDT({
+    filtered_data()
+  }, options = list(pageLength = 10, scrollX = TRUE))
+  
+  # 下载筛选后的数据
+  output$download_data <- downloadHandler(
+    filename = function() { paste0("母婴筛选数据_", Sys.Date(), ".xlsx") },
+    content = function(file) { write_xlsx(filtered_data(), file) }
+  )
+  
+  # 下载图表（三个标签页通用）
+  output$download_dist_plot <- downloadHandler(
+    filename = function() { paste0("分布图表_", Sys.Date(), ".png") },
+    content = function(file) { ggsave(file, plot = output$dist_plot(), width = 10, height = 6, dpi = 300) }
+  )
+  output$download_group_plot <- downloadHandler(
+    filename = function() { paste0("分组对比图表_", Sys.Date(), ".png") },
+    content = function(file) { ggsave(file, plot = output$group_plot(), width = 10, height = 6, dpi = 300) }
+  )
+  output$download_corr_plot <- downloadHandler(
+    filename = function() { paste0("关联分析图表_", Sys.Date(), ".png") },
+    content = function(file) { ggsave(file, plot = output$corr_plot(), width = 10, height = 6, dpi = 300) }
+  )
+}
+
+# ========== 运行Shiny应用 ==========
+shinyApp(ui, server)
